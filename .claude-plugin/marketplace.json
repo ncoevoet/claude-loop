@@ -1,0 +1,30 @@
+{
+  "name": "ncoevoet",
+  "description": "Marketplace for goal-loop — a hard-verifier + escalation layer for Claude Code /goal.",
+  "owner": {
+    "name": "Nicolas Coevoet"
+  },
+  "plugins": [
+    {
+      "name": "goal-loop",
+      "source": "./",
+      "version": "0.1.0",
+      "description": "Hard-verifier + escalation layer for Claude Code /goal: a deterministic, project-agnostic oracle (lint/test/arch/build + review-all gate) enforced by a Stop hook, with stuck-detection and human escalation.",
+      "author": {
+        "name": "Nicolas Coevoet",
+        "url": "https://github.com/ncoevoet"
+      },
+      "homepage": "https://github.com/ncoevoet/claude-loop",
+      "repository": "https://github.com/ncoevoet/claude-loop",
+      "license": "MIT",
+      "keywords": [
+        "goal",
+        "loop",
+        "autonomous",
+        "verifier",
+        "oracle",
+        "harness"
+      ]
+    }
+  ]
+}

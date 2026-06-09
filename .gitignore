@@ -1,0 +1,17 @@
+# Run state written by the harness into target projects (never the plugin repo,
+# but ignore here too so local dogfooding scratch never gets committed).
+loops/
+.claude/loop/
+verdict.json
+gate-verdict.json
+
+# Python / tooling caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Local scratch
+output.log
+*.log
+.DS_Store
