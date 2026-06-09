@@ -23,7 +23,7 @@ done
 echo
 echo "== shellcheck (if available) =="
 if command -v shellcheck >/dev/null 2>&1; then
-  shellcheck -x "$ROOT"/skills/goal-loop/scripts/*.sh && echo "  shellcheck clean" || rc=1
+  shellcheck -x --source-path="$ROOT/skills/goal-loop/scripts" "$ROOT"/skills/goal-loop/scripts/*.sh && echo "  shellcheck clean" || rc=1
 else
   echo "  shellcheck not installed — skipped (CI runs it)"
 fi

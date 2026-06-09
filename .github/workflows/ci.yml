@@ -18,7 +18,7 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
-          shellcheck -x skills/goal-loop/scripts/*.sh
+          shellcheck -x --source-path=SCRIPTDIR skills/goal-loop/scripts/*.sh
 
       - name: tests
         run: bash tests/run.sh
