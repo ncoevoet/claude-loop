@@ -85,7 +85,7 @@ The hook is **fast** (reads a file + a git sha — never runs the oracle, which 
     "test": "vitest related --run",
     "mandatory": ["lint", "test", "reviewall"]
   },
-  "reviewall": { "severityFloor": "critical" },
+  "reviewall": { "severityFloor": "important" },
   "budget": { "maxIterations": 20, "maxRepeatedFailures": 3 }
 }
 ```

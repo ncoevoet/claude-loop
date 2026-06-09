@@ -91,7 +91,7 @@ run_cmd() {  # run_cmd <timeout> <command-string>; echoes combined output, retur
   else ( cd "$ROOT" && bash -c "$2" ) 2>&1; fi
 }
 
-RA_FLOOR="$(loop_json_get "$CONFIG" reviewall.severityFloor critical)"
+RA_FLOOR="$(loop_json_get "$CONFIG" reviewall.severityFloor important)"
 
 PASS=true; FAILING=""; EVIDENCE=""; STAGES=""
 record() { STAGES="${STAGES}${1}	${2}

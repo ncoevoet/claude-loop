@@ -17,7 +17,7 @@ You orchestrate an autonomous loop that keeps working toward an objective and **
 |---|---|
 | keep-working loop, completion evaluator, cross-turn state, resume | **Claude Code `/goal`** (optional, recommended) |
 | **deterministic oracle** — actually runs lint/test/typecheck/build, trusts exit codes | **`scripts/verify.sh`** (you run it) |
-| **semantic gate** — confirmed-critical findings block | **`/review-all gate`** (if installed + configured) |
+| **semantic gate** — confirmed critical/important findings block | **`/review-all gate`** (if installed + configured) |
 | **enforcement** — block stop until the oracle is fresh + pass | **Stop hook** (`goal-loop-gate.sh`) |
 | **stuck-detection + budget + escalation** | this skill + the Stop hook |
 

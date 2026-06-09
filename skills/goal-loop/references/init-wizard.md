@@ -10,7 +10,7 @@ Run on `/goal-loop init`, or automatically (with the user's confirmation) the fi
 
 3. **Pick the mandatory set** (`oracle.mandatory`). Default `["lint","test"]`. Offer adding `typecheck`, `architecture`, `build`, and `reviewall`. Explain the trade-off: more gates = higher confidence, slower iterations. `build` is usually left out of the hot loop and added only for release-gating.
 
-4. **review-all gate.** If the `review-all` plugin is installed and the user wants the semantic gate, add `reviewall` to `mandatory` and set `reviewall.severityFloor` (default `critical`; `important` for stricter). If review-all is not installed, say so and leave `reviewall` out.
+4. **review-all gate.** If the `review-all` plugin is installed and the user wants the semantic gate, add `reviewall` to `mandatory` and set `reviewall.severityFloor` (default `important` = 🔴+🟠; `critical` to gate on 🔴 only). If review-all is not installed, say so and leave `reviewall` out.
 
 5. **Budget.** Confirm `budget.maxIterations` (default 20) and `budget.maxRepeatedFailures` (default 3).
 

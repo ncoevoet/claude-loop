@@ -12,7 +12,7 @@ Per-project oracle + budget config. All keys optional; defaults below apply when
 | `oracle.architecture` | string | _(none)_ | Architecture/graph gate (e.g. `depcruise …`). Config-only — no discovery default. | Project-specific; there is no safe generic default, so it never runs unless you set it. |
 | `oracle.build` | string | discovery | Build command. The heaviest shell stage. | Opt-in via `mandatory` — building every iteration is slow; many loops gate on tests + review only. |
 | `oracle.mandatory` | string[] | `["lint","test"]` (of those discovered) | Stages that must pass to declare done, in order. | Conservative + fast default. Add `typecheck`/`architecture`/`build`/`reviewall` per project. |
-| `reviewall.severityFloor` | string | `"critical"` | Floor passed to `/review-all gate`. `critical` → 🔴 only; `important` → 🔴+🟠. | Block the loop on real breakage only; debt/style is recorded by review-all but should not stall a loop. |
+| `reviewall.severityFloor` | string | `"important"` | Floor passed to `/review-all gate`. `important` → 🔴+🟠; `critical` → 🔴 only. | Block on real bugs (🔴) AND likely bugs / missing error handling (🟠) — the tiers worth stopping a loop for. Debt/style is recorded by review-all but never blocks. Drop to `critical` to gate on 🔴 only. |
 | `budget.maxIterations` | number | `20` | Hard ceiling on oracle-fail / nudge cycles before the loop stops as `budget_exhausted`. | High enough for real multi-step work, low enough to bound a runaway. The Stop hook is bounded by this. |
 | `budget.maxRepeatedFailures` | number | `3` | Same failing-gate signature this many times in a row → stop as `blocked` and escalate. | Two repeats can be noise; three signals the loop is not converging — escalate rather than burn budget. |
 
@@ -27,7 +27,7 @@ Per-project oracle + budget config. All keys optional; defaults below apply when
     "build": "npm run build",
     "mandatory": ["lint", "test", "architecture", "reviewall"]
   },
-  "reviewall": { "severityFloor": "critical" },
+  "reviewall": { "severityFloor": "important" },
   "budget": { "maxIterations": 20, "maxRepeatedFailures": 3 }
 }
 ```
