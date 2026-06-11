@@ -64,8 +64,8 @@ rc=$?
 # Short usage waits halt IN-SESSION (the engine blocks with a watch-quota.sh
 # instruction — no process to spawn here). Only the long-wait fallback sets
 # status=paused; ping the user (best-effort) so they know to resume later.
-if [ "$(loop_state_get status "" 2>/dev/null)" = "paused" ]; then
-  command -v notify-send >/dev/null 2>&1 \
-    && notify-send "goal-loop" "Paused: API usage at the floor. Run /goal-loop resume once the window resets." 2>/dev/null || true
+if [ "$(loop_state_get status "" 2>/dev/null)" = "paused" ] \
+    && command -v notify-send >/dev/null 2>&1; then
+  notify-send "goal-loop" "Paused: API usage at the floor. Run /goal-loop resume once the window resets." 2>/dev/null || true
 fi
 exit "$rc"
