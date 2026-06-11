@@ -8,7 +8,7 @@
     {
       "name": "goal-loop",
       "source": "./",
-      "version": "0.1.0",
+      "version": "0.0.1",
       "description": "Hard-verifier + escalation layer for Claude Code /goal: a deterministic, project-agnostic oracle (lint/test/arch/build + review-all gate) enforced by a Stop hook, with stuck-detection and human escalation.",
       "author": {
         "name": "Nicolas Coevoet",
