@@ -15,6 +15,7 @@ A hard-verifier + escalation layer for [Claude Code](https://code.claude.com/doc
 | — (loops forever if unsatisfiable) | **stuck-detector**: same failure ×N → stop + escalate |
 | — | **budget**: hard `maxIterations` ceiling |
 | — | **escalation**: six blocker conditions → `BLOCKER.md` + a focused question |
+| — | **usage-aware halt**: stops at the 5h/weekly quota floor and resumes in-session when it frees |
 | — | an optional **semantic gate** via `/review-all gate` |
 
 The oracle is **project-agnostic**: gate commands are discovered per repo (`detect-toolchain.sh`) and overridable in `.claude/loop.json`.
@@ -69,6 +70,7 @@ make install      # rsync skills/goal-loop → ~/.claude/skills/ + register the 
         verdict missing or stale (sha ≠ worktree) .. BLOCK (exit 2): "run verify.sh"
         verdict fresh, pass:true ................... allow stop → status=complete
         verdict fresh, pass:false ................. BLOCK (exit 2): inject failing gate
+        usage ≥ floor (5h / weekly) ............... HALT → in-session watch resumes on reset
         same failure ×N ........................... allow stop → status=blocked + BLOCKER.md
         iteration ≥ cap ........................... allow stop → status=budget_exhausted
 ```
@@ -90,6 +92,15 @@ The hook is **fast** (reads a file + a git sha — never runs the oracle, which 
 }
 ```
 
+## Usage-aware halt (5h + weekly)
+
+When a loop is active and your **5-hour** or **weekly** usage reaches `budget.usagePauseFloor` (default **96%**), the loop **stops burning quota** — with no `claude -p` and no background daemon:
+
+- **5-hour window (short wait):** the Stop hook blocks each turn and tells the agent to run `watch-quota.sh` — a bounded watch that sleeps one chunk (≤ ~9 min) and re-checks. The agent re-runs it each turn (every run is a tool call = *progress*, so Claude Code's Stop-hook block cap never trips) until usage drops below the floor, then the loop **continues itself in the same session**. Costs a few cheap turns while waiting; the session must stay open.
+- **Weekly window (long wait, beyond `budget.maxAutoWait`):** a session can't be held open for days, so the hook sets `status=paused` and notifies; run `/goal-loop resume` once the window resets.
+
+The plugin reads usage from Claude Code's own OAuth usage API + credentials — **no status line required**. It only activates for subscription (Pro/Max) logins; with API-key auth it stays dormant and the loop behaves exactly as before. Tunables: `budget.usagePauseFloor`, `usageWindows`, `maxAutoWait`, `usagePollBase` — see [`config-keys.md`](skills/goal-loop/references/config-keys.md).
+
 ## Requirements
 
 - [Claude Code](https://code.claude.com/docs) with built-in `/goal`
@@ -110,6 +121,8 @@ claude-loop/
 │       ├── gate-decide.py               # hook decision engine (fail-open, bounded)
 │       ├── verify.sh                    # the oracle
 │       ├── loop-lib.sh                  # shared helpers (work-sha, config)
+│       ├── usage-lib.sh                 # self-contained usage fetch + cache (5h/weekly)
+│       ├── watch-quota.sh               # agent-run bounded usage watch (in-session wait)
 │       ├── detect-toolchain.sh          # project-agnostic command discovery
 │       └── install-hook.sh              # settings.json hook registration (manual path)
 ├── tests/                               # python unittests + shell integration (no API key)

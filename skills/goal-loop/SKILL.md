@@ -1,7 +1,7 @@
 ---
 name: goal-loop
 description: "Drive an objective to DONE under a hard, deterministic oracle. Wraps Claude Code's /goal with a real verifier (lint/test/typecheck/build + /review-all gate) enforced by a Stop hook, plus stuck-detection and human escalation. Use for: 'loop until done', 'autonomous run that stops only when verified or blocked', /goal-loop, drive a task to completion without stopping after every subtask."
-argument-hint: "\"<objective>\" | init | status | abort"
+argument-hint: "\"<objective>\" | init | status | abort | resume"
 allowed-tools: Bash(bash:*) Bash(git:*) Bash(python3:*) Bash(mkdir:*) Bash(ls:*) Bash(cat:*) Read Glob Grep Write Edit AskUserQuestion
 ---
 
@@ -38,8 +38,9 @@ All later commands use `"$LOOP/verify.sh"` etc. The loop's run-state lives in th
 ## Step 1 — Route on `$ARGUMENTS`
 
 - `init` → load **`references/init-wizard.md`** and write `.claude/loop.json`. Exit.
-- `status` → read `.claude/loop/STATE.json` + `.claude/loop/verdict.json` and report status, iteration/cap, last failing gate, and the GOAL outcome. Exit.
-- `abort` → `touch .claude/loop/ABORT`; tell the user the loop is released (the Stop hook will allow stopping on the next turn) and to run `/goal clear` if they started a native goal. Exit.
+- `status` → read `.claude/loop/STATE.json` + `.claude/loop/verdict.json` and report status, iteration/cap, last failing gate, and the GOAL outcome. If `usageHold` is set, report it is waiting in-session for the usage window (window / % / resumeAt). If `status=paused`, report `pausedWindow` / `pausedUtil` / `resumeAt` and that `/goal-loop resume` continues it. Exit.
+- `abort` → `touch .claude/loop/ABORT`; tell the user the loop is released (the Stop hook allows stopping on the next turn; any in-session usage wait ends too) and to run `/goal clear` if they started a native goal. Exit.
+- `resume` → for a `paused` loop, re-arm now without waiting for the window: set `status=running` and clear the pause fields in `STATE.json` (`python3`), then continue the objective in `.claude/loop/GOAL.md`. Exit if no loop is paused.
 - Anything else → treat as the **objective**; continue below.
 
 ## Step 2 — Author the GOAL contract
@@ -94,6 +95,8 @@ Then state the **loop protocol** you (the agent) will follow, and begin working 
 3. If the oracle FAILS, read `failingGate` + evidence from `.claude/loop/verdict.json`, fix it, and re-run. Do **not** stop — the Stop hook will block you anyway and tell you what failed.
 4. Continue autonomously through safe steps. Only stop to ask when a real blocker hits (Step 5).
 5. When the oracle passes, the Stop hook sets `status=complete` and allows the session to end. Give a final summary (Outcome met, files changed, gates passed).
+
+**Usage auto-halt (automatic — not an escalation):** if the 5-hour or weekly quota reaches `budget.usagePauseFloor` (default 96%), the Stop hook stops burning quota. For a short wait (5-hour window) it blocks each turn and asks you to run `bash "$LOOP/watch-quota.sh"` — keep re-running it until it prints `QUOTA FREED`, then continue working; the loop resumes itself in this session (no `claude -p`). For a long wait (weekly window, beyond `budget.maxAutoWait`) it sets `status=paused`; resume with `/goal-loop resume` once the window resets. `touch .claude/loop/ABORT` to cancel. See `references/config-keys.md`.
 
 ## Step 5 — Escalation
 

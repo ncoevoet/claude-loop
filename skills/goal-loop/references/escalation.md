@@ -2,6 +2,8 @@
 
 The whole point of the loop is to **not** interrupt for low-value confirmations. Continue through safe intermediate steps. Stop and ask the human ONLY when defensible progress is no longer possible.
 
+> **Not a blocker:** an API-usage halt (5-hour / weekly quota at `budget.usagePauseFloor`) is handled automatically — a short wait resumes itself in-session via `watch-quota.sh`; only a long (multi-day weekly) wait sets `status=paused` for a `/goal-loop resume`. It is none of the conditions below. See `config-keys.md`.
+
 ## The six blocker conditions
 
 1. **Missing access** — a required secret, credential, account, or external service is unavailable.
