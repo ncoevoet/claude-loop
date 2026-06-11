@@ -13,10 +13,12 @@ set -u
 HERE="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || { echo "QUOTA FREED (no script dir) — continue."; exit 0; }
 # shellcheck source=loop-lib.sh
 . "$HERE/loop-lib.sh" 2>/dev/null || { echo "QUOTA FREED (usage lib unavailable) — continue."; exit 0; }
+CONFIG="$(loop_config_file 2>/dev/null || true)"
+USAGE_CACHE_DIR="$(loop_json_get "$CONFIG" budget.usageCacheDir "" 2>/dev/null || true)"
+[ -n "${USAGE_CACHE_DIR// }" ] && export LOOP_USAGE_CACHE_DIR="$USAGE_CACHE_DIR"
 # shellcheck source=usage-lib.sh
 . "$HERE/usage-lib.sh" 2>/dev/null || { echo "QUOTA FREED (usage lib unavailable) — continue."; exit 0; }
 
-CONFIG="$(loop_config_file 2>/dev/null || true)"
 FLOOR="$(loop_json_get "$CONFIG" budget.usagePauseFloor 96)"
 case "$FLOOR" in ''|*[!0-9]*) FLOOR=96 ;; esac
 BASE="$(loop_json_get "$CONFIG" budget.usagePollBase 540)"

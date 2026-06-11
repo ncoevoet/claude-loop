@@ -115,7 +115,7 @@ usage_fetch() {
   if [ "$code" = "200" ] && [ -s "$tmp" ] \
       && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$tmp" 2>/dev/null; then
     python3 - "$tmp" "$cache" "$now" <<'PY' 2>/dev/null || true
-import json, sys
+import json, os, sys
 src, dst, now = sys.argv[1], sys.argv[2], int(sys.argv[3])
 data = json.load(open(src))
 def u(win):
@@ -127,7 +127,9 @@ def u(win):
 mx = max(u("five_hour"), u("seven_day"))
 ttl = 300 if mx > 80 else 900 if mx > 50 else 1800
 out = {"fetched_at": now, "adaptive_ttl": ttl, "backoff_until": 0, "data": data}
-json.dump(out, open(dst, "w"))
+tmp = dst + ".w%d.tmp" % os.getpid()
+json.dump(out, open(tmp, "w"))
+os.replace(tmp, dst)
 PY
     rm -f "$tmp"
     usage_parse "$cache"
@@ -148,7 +150,9 @@ try:
 except Exception:
     data = None
 out = {"fetched_at": fetched, "adaptive_ttl": 900, "backoff_until": now + bo, "data": data}
-json.dump(out, open(cache, "w"))
+tmp = cache + ".w%d.tmp" % os.getpid()
+json.dump(out, open(tmp, "w"))
+os.replace(tmp, cache)
 PY
   rm -f "$tmp"
   return 0

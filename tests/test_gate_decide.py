@@ -217,6 +217,30 @@ class TestGateDecide(unittest.TestCase):
         self.assertEqual(p.returncode, 0)
         self.assertEqual(self.state_now()["status"], "complete")
 
+    def test_usage_wait_does_not_bleed_stuck_counter(self):
+        # A multi-turn in-session wait must NOT advance sameFailureCount: the agent
+        # is only running watch-quota.sh (no fix attempt), so re-counting it would
+        # false-escalate a long wait as "stuck". The counter stays frozen across
+        # every wait turn while the same failure is held.
+        self.write(self.state, {"status": "running", "iteration": 3, "maxIterations": 20,
+                                "maxRepeatedFailures": 3})
+        self.write(self.verdict, {"reviewedSha": SHA, "pass": False,
+                                  "failingGate": "test", "evidence": "boom"})
+        cache = self.write_cache(five=99, five_reset=self.iso_in(3600), seven=10)
+        for _ in range(5):
+            p = self.decide(usage_cache=cache)
+            self.assertEqual(p.returncode, 2)            # still holding, never escalates
+            s = self.state_now()
+            self.assertEqual(s["status"], "running")
+            self.assertEqual(s["sameFailureCount"], 1)   # frozen, not climbing to 3
+        # Quota frees → hold clears; the still-failing oracle now counts as a real
+        # post-wait attempt (counter resumes, no longer frozen).
+        freed = self.write_cache(five=40, seven=10)
+        self.decide(usage_cache=freed)
+        s = self.state_now()
+        self.assertNotIn("usageHold", s)
+        self.assertEqual(s["sameFailureCount"], 2)
+
     def test_stuck_wins_over_hold(self):
         # A genuinely stuck loop escalates even when usage is high.
         sig = "test:" + __import__("hashlib").sha256(b"boom").hexdigest()[:16]

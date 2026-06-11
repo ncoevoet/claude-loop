@@ -151,7 +151,7 @@ def _pause(state_path, state, state_dir, info):
     sys.exit(0)
 
 
-def _usage_hold(state_path, state, state_dir, info, verify_hint):
+def _usage_hold(state_path, state, state_dir, info, verify_hint, sig=None):
     """Usage is over the floor on a keep-working path. If the window resets soon
     (≤ maxAutoWait), HALT IN-SESSION: block (exit 2) with an instruction to run the
     watch script. The agent re-runs it each turn until quota frees — each run is a
@@ -176,6 +176,7 @@ def _usage_hold(state_path, state, state_dir, info, verify_hint):
         "window": info["window"],
         "util": {k: round(v, 1) for k, v in info.get("util", {}).items()},
         "resumeAt": info.get("resumeAt"),
+        "sig": sig,
     }
     _save(state_path, state)  # NB: iteration NOT bumped while waiting
     watch = os.path.join(os.path.dirname(verify_hint), "watch-quota.sh")
@@ -252,23 +253,33 @@ def main():
     failing = verdict.get("failingGate") or "unknown"
     evidence = str(verdict.get("evidence", ""))
     sig = failing + ":" + hashlib.sha256(evidence.encode("utf-8", "replace")).hexdigest()[:16]
-    same = same + 1 if sig == last_sig else 1
-    state["lastFailureSig"] = sig
-    state["sameFailureCount"] = same
 
-    if same >= max_rep:
-        state["status"] = "blocked"
-        _save(state_path, state)
-        _write_blocker(state_dir, "stuck",
-                       f"Gate `{failing}` failed {same} times with the same signature — "
-                       f"the loop is not making progress.\n\nEvidence:\n{evidence}")
-        sys.exit(0)  # allow stop → the skill surfaces the blocker via AskUserQuestion
+    # A continuing usage wait is neither progress nor a fresh failed attempt: the
+    # agent is only running watch-quota.sh, making no fix. Re-counting it toward
+    # the stuck cap would false-escalate a long wait as "not making progress", so
+    # freeze the counter while the SAME failure is held under an active usageHold.
+    prev_hold = state.get("usageHold")
+    continuing_wait = (over_usage and isinstance(prev_hold, dict)
+                       and prev_hold.get("sig") == sig)
 
-    # Not stuck yet, but if usage is over the floor, halt here rather than push on.
-    # The failure signature is already recorded above, so stuck-detection keeps
-    # counting correctly across the wait.
+    if not continuing_wait:
+        same = same + 1 if sig == last_sig else 1
+        state["lastFailureSig"] = sig
+        state["sameFailureCount"] = same
+
+        if same >= max_rep:
+            state["status"] = "blocked"
+            _save(state_path, state)
+            _write_blocker(state_dir, "stuck",
+                           f"Gate `{failing}` failed {same} times with the same signature — "
+                           f"the loop is not making progress.\n\nEvidence:\n{evidence}")
+            sys.exit(0)  # allow stop → the skill surfaces the blocker via AskUserQuestion
+
+    # Usage over the floor → halt here rather than push on. The failure signature
+    # is recorded under usageHold so the next turn recognizes the wait and keeps
+    # the stuck counter frozen until the window frees (or the failure changes).
     if over_usage:
-        _usage_hold(state_path, state, state_dir, over_usage, verify_hint)
+        _usage_hold(state_path, state, state_dir, over_usage, verify_hint, sig)
 
     state["iteration"] = iteration + 1
     _save(state_path, state)

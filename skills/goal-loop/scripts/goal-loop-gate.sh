@@ -44,11 +44,13 @@ WORK_SHA="$(loop_work_sha 2>/dev/null)" || exit 0
 # Resolve fresh usage stats for the pause check (own fetch with a 5s curl, well
 # within the hook's 30s budget; statusline cache used as a fast-path). All
 # fail-soft: an empty cache → the decision engine sees no data → no pause.
+CONFIG="$(loop_config_file 2>/dev/null || true)"
+USAGE_CACHE_DIR="$(loop_json_get "$CONFIG" budget.usageCacheDir "" 2>/dev/null || true)"
+[ -n "${USAGE_CACHE_DIR// }" ] && export LOOP_USAGE_CACHE_DIR="$USAGE_CACHE_DIR"
 USAGE_CACHE=""
 if . "$HERE/usage-lib.sh" 2>/dev/null; then
   USAGE_CACHE="$(usage_ensure_fresh 2>/dev/null || true)"
 fi
-CONFIG="$(loop_config_file 2>/dev/null || true)"
 FLOOR="$(loop_json_get "$CONFIG" budget.usagePauseFloor 96 2>/dev/null || echo 96)"
 WINDOWS="$(loop_json_get "$CONFIG" budget.usageWindows 'five_hour seven_day' 2>/dev/null | tr '\n' ' ')"
 [ -n "${WINDOWS// }" ] || WINDOWS="five_hour seven_day"
