@@ -26,7 +26,7 @@ The oracle is **project-agnostic**: gate commands are discovered per repo (`dete
 
 ```
 /plugin marketplace add ncoevoet/claude-loop
-/plugin install goal-loop@ncoevoet
+/plugin install goal-loop@ncoevoet-loop
 ```
 
 The skill and the Stop hook (`hooks/hooks.json`) register automatically.
