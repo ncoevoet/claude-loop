@@ -6,7 +6,9 @@ decide whether the session may stop. Pure + deterministic + FAIL-OPEN: any
 unexpected error exits 0 (allow stop) so a harness bug can never wedge a session.
 
 Exit 0  → allow stop (goal complete, blocked/escalated, budget, aborted, or no
-          active loop). The bash wrapper prints nothing.
+          active loop). Silent, except the run-budget escalation, which emits a
+          `systemMessage` JSON object on stdout (the only user-visible channel a
+          Stop hook has when it allows the stop).
 Exit 2  → block stop (keep working). The reason is printed to STDERR; Claude Code
           feeds it back to the model as the instruction for the next turn.
 
@@ -18,6 +20,7 @@ pass — which also makes the result unspoofable (it reads the file, not prose).
 Usage: gate-decide.py STATE_JSON VERDICT_JSON WORK_SHA VERIFY_HINT [STOP_HOOK_ACTIVE]
 """
 import datetime
+import glob
 import hashlib
 import json
 import os
@@ -51,6 +54,128 @@ def _write_blocker(state_dir, kind, detail):
 def _block(reason):
     sys.stderr.write(reason + "\n")
     sys.exit(2)
+
+
+def _tell_user(message):
+    """Reach the HUMAN on an allow-stop path. A Stop hook's plain stdout/stderr is
+    invisible (debug log only) when it exits 0 — the only user-visible channel is a
+    structured `systemMessage`, so stdout must carry that JSON object and nothing else."""
+    json.dump({"systemMessage": message[:9000]}, sys.stdout)
+    sys.stdout.write("\n")
+
+
+def _env_int(name, default):
+    try:
+        return int(float(os.environ.get(name) or default))
+    except Exception:
+        return default
+
+
+def _transcript_files(path):
+    """The session transcript plus its subagent transcripts. Claude Code stores
+    Task-tool runs in SEPARATE files under `<session-id>/subagents/agent-*.jsonl`
+    (documented layout), not inline — and that is where most of a marathon's cost
+    lives, so a run budget that ignored them would never trip."""
+    files = [path]
+    base = path[:-6] if path.endswith(".jsonl") else path
+    files.extend(sorted(glob.glob(os.path.join(base, "subagents", "*.jsonl"))))
+    return files
+
+
+def _transcript_counts(files):
+    """(turns, output_tokens) over the given transcripts. A turn is one assistant
+    message. Claude Code writes one line per content block, each repeating the SAME
+    `message.id` AND the same `usage` object — so both counts must dedupe by id or
+    they inflate (measured 2x-4.5x). The JSONL format is internal to Claude Code and
+    may change between versions; every read here is best-effort by design."""
+    turns = out = 0
+    seen = set()
+    for path in files:
+        try:
+            fh = open(path, errors="replace")
+        except Exception:
+            continue
+        with fh:
+            for line in fh:
+                if '"assistant"' not in line:     # cheap prefilter: skip user/meta lines
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if rec.get("type") != "assistant":
+                    continue
+                msg = rec.get("message") or {}
+                mid = msg.get("id")
+                if mid:
+                    if mid in seen:
+                        continue
+                    seen.add(mid)
+                turns += 1
+                try:
+                    out += int((msg.get("usage") or {}).get("output_tokens") or 0)
+                except Exception:
+                    pass
+    return turns, out
+
+
+def _over_run_budget():
+    """Run ceiling for THIS session: turns + cumulative output tokens, derived from
+    the transcript the Stop hook was handed. `maxIterations` bounds how many times
+    the hook BLOCKS, not the work each block buys, so a stuck loop can burn millions
+    of tokens between two blocks — this is that missing bound. Returns a dict when a
+    ceiling is reached, else None (no transcript / under budget / 0 = disabled / any
+    error → fail-open, behavior unchanged)."""
+    try:
+        path = (os.environ.get("LOOP_TRANSCRIPT") or "").strip()
+        if not path or not os.path.isfile(path):
+            return None
+        max_turns = _env_int("LOOP_MAX_TURNS", 3000)
+        max_out = _env_int("LOOP_MAX_OUTPUT_TOKENS", 1000000)
+        if max_turns <= 0 and max_out <= 0:
+            return None
+        turns, out = _transcript_counts(_transcript_files(path))
+        hit = []
+        if 0 < max_turns <= turns:
+            hit.append("turns")
+        if 0 < max_out <= out:
+            hit.append("outputTokens")
+        if not hit:
+            return None
+        return {"turns": turns, "outputTokens": out, "maxTurns": max_turns,
+                "maxOutputTokens": max_out, "hit": hit}
+    except Exception:
+        return None
+
+
+def _oracle_summary(verdict, fresh):
+    """One-line oracle state for the escalation message. A spent budget is NEVER a
+    pass, so every branch says so out loud — the goal is unverified."""
+    if not isinstance(verdict, dict):
+        return "never run (no verdict.json) — goal UNVERIFIED"
+    gate = verdict.get("failingGate") or "unknown"
+    if not fresh:
+        return ("stale verdict (pass=%s, gate `%s`) judging other code — goal "
+                "UNVERIFIED on the current changes" % (verdict.get("pass"), gate))
+    return "fresh FAIL at gate `%s` — goal UNVERIFIED" % gate
+
+
+def _run_budget_stop(state_path, state, state_dir, info, oracle):
+    """The run ceiling is spent without the oracle passing: ALLOW the stop (exit 0)
+    rather than force another iteration, and escalate to the human. Deliberately
+    does NOT set the oracle to pass — the objective is reported as unverified."""
+    state["status"] = "budget_exhausted"
+    state["runBudget"] = info
+    state.pop("usageHold", None)
+    _save(state_path, state)
+    msg = ("goal-loop: budget exceeded (%d turns / %d output tokens; caps %d/%d) — "
+           "escalating to human; oracle state: %s. The objective is NOT done: stop "
+           "here and report it as unverified."
+           % (info["turns"], info["outputTokens"], info["maxTurns"],
+              info["maxOutputTokens"], oracle))
+    _write_blocker(state_dir, "run-budget", msg)
+    _tell_user(msg)
+    sys.exit(0)
 
 
 def _now_iso():
@@ -229,6 +354,15 @@ def main():
 
     verdict = _load(verdict_path)
     fresh = isinstance(verdict, dict) and verdict.get("reviewedSha") == work_sha
+
+    # Run ceiling (turns + output tokens). Checked before EVERY keep-working path —
+    # including the usage hold — so a loop that cannot converge escalates instead of
+    # buying itself another few hundred turns. A fresh PASS still completes normally.
+    if not (fresh and verdict.get("pass") is True):
+        over_run = _over_run_budget()
+        if over_run:
+            _run_budget_stop(state_path, state, state_dir, over_run,
+                             _oracle_summary(verdict, fresh))
 
     # Oracle not run on the current working tree → must verify before stopping.
     if not fresh:

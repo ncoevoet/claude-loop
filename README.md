@@ -13,7 +13,7 @@ A hard-verifier + escalation layer for [Claude Code](https://code.claude.com/doc
 | keep-working loop, evaluator, state, resume | a real **oracle** that runs commands and trusts exit codes |
 | — | **enforcement**: a Stop hook blocks "done" until the oracle passes |
 | — (loops forever if unsatisfiable) | **stuck-detector**: same failure ×N → stop + escalate |
-| — | **budget**: hard `maxIterations` ceiling |
+| — | **budget**: hard `maxIterations` ceiling + a per-run **turn / output-token** ceiling |
 | — | **escalation**: six blocker conditions → `BLOCKER.md` + a focused question |
 | — | **usage-aware halt**: stops at the 5h/weekly quota floor and resumes in-session when it frees |
 | — | an optional **semantic gate** via `/review-all gate` |
@@ -73,6 +73,7 @@ make install      # rsync skills/goal-loop → ~/.claude/skills/ + register the 
         usage ≥ floor (5h / weekly) ............... HALT → in-session watch resumes on reset
         same failure ×N ........................... allow stop → status=blocked + BLOCKER.md
         iteration ≥ cap ........................... allow stop → status=budget_exhausted
+        turns / output tokens ≥ cap ............... allow stop → budget_exhausted + escalate
 ```
 
 The hook is **fast** (reads a file + a git sha — never runs the oracle, which could take minutes and exceed a hook timeout) and **fail-open** (any error → allow stop, so a harness bug can never wedge a session). The oracle's `reviewedSha` is a **work-sha** over HEAD + tracked diff + untracked files (excluding run-state), so it tracks uncommitted changes correctly across a loop that makes no commits.
@@ -88,9 +89,32 @@ The hook is **fast** (reads a file + a git sha — never runs the oracle, which 
     "mandatory": ["lint", "test", "reviewall"]
   },
   "reviewall": { "severityFloor": "important" },
-  "budget": { "maxIterations": 20, "maxRepeatedFailures": 3 }
+  "budget": { "maxIterations": 20, "maxRepeatedFailures": 3,
+              "maxTurns": 3000, "maxOutputTokens": 1000000 }
 }
 ```
+
+## Run ceiling (turns + output tokens)
+
+`maxIterations` bounds how many times the Stop hook **blocks** — not the turns each block buys, so
+a loop that cannot converge can run for hours between two blocks. `budget.maxTurns` (default
+**3000**) and `budget.maxOutputTokens` (default **1 000 000**) bound the run itself. When either is
+reached the hook **stops blocking**, sets `status=budget_exhausted`, writes `BLOCKER.md`, and shows
+the user:
+
+```
+goal-loop: budget exceeded (3000 turns / 612480 output tokens; caps 3000/1000000) — escalating
+to human; oracle state: fresh FAIL at gate `test` — goal UNVERIFIED.
+```
+
+It never fakes a pass — the message always reports the goal as unverified. Counts come from the
+session transcript the Stop hook is handed (plus its `subagents/*.jsonl`), deduped by `message.id`;
+`0` disables a ceiling, and anything unreadable fails open.
+
+The defaults are calibrated on two measured runaways (4 823 turns / 996 K output tokens and 4 293 /
+769 K, ~12 h each): 3000 turns stops both about a third of the way in. Raise them if your loops
+legitimately run that long — a genuine marathon will otherwise escalate as unverified. Details:
+[`config-keys.md`](skills/goal-loop/references/config-keys.md).
 
 ## Usage-aware halt (5h + weekly)
 

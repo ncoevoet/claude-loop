@@ -39,15 +39,39 @@ class TestGateDecide(unittest.TestCase):
             json.dump({"data": data}, fh)
         return path
 
-    def decide(self, work_sha=SHA, usage_cache=None, floor="96", windows=None):
-        # Hermetic: strip any inherited LOOP_USAGE_* so the usage guard is off
-        # unless a test opts in by passing usage_cache.
-        env = {k: v for k, v in os.environ.items() if not k.startswith("LOOP_USAGE_")}
+    def write_transcript(self, msgs, path=None):
+        """Craft a session transcript. `msgs` is a list of (message_id, output_tokens)
+        pairs — repeat an id to emulate Claude Code splitting one assistant message
+        across several content-block lines (each repeating the SAME usage object)."""
+        path = path or os.path.join(self.d, "session.jsonl")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write(json.dumps({"type": "user", "message": {"role": "user"}}) + "\n")
+            for mid, out in msgs:
+                fh.write(json.dumps({
+                    "type": "assistant",
+                    "message": {"id": mid, "role": "assistant",
+                                "usage": {"output_tokens": out}}}) + "\n")
+        return path
+
+    def decide(self, work_sha=SHA, usage_cache=None, floor="96", windows=None,
+               transcript=None, max_turns=None, max_output_tokens=None):
+        # Hermetic: strip any inherited LOOP_* so the usage guard and the run budget
+        # are off unless a test opts in.
+        env = {k: v for k, v in os.environ.items() if not k.startswith("LOOP_")}
         if usage_cache is not None:
             env["LOOP_USAGE_CACHE"] = usage_cache
             env["LOOP_USAGE_FLOOR"] = str(floor)
             if windows:
                 env["LOOP_USAGE_WINDOWS"] = windows
+        if transcript is not None:
+            # A cap left as None is NOT exported, so the engine's own default applies
+            # (that is what test_run_budget_ships_calibrated_defaults pins).
+            env["LOOP_TRANSCRIPT"] = transcript
+            if max_turns is not None:
+                env["LOOP_MAX_TURNS"] = str(max_turns)
+            if max_output_tokens is not None:
+                env["LOOP_MAX_OUTPUT_TOKENS"] = str(max_output_tokens)
         return subprocess.run(
             [sys.executable, SCRIPT, self.state, self.verdict, work_sha, "/x/verify.sh"],
             capture_output=True, text=True, env=env)
@@ -240,6 +264,130 @@ class TestGateDecide(unittest.TestCase):
         s = self.state_now()
         self.assertNotIn("usageHold", s)
         self.assertEqual(s["sameFailureCount"], 2)
+
+    # --- run budget (turns + output tokens) --------------------------------
+
+    def running(self, **extra):
+        s = {"status": "running", "iteration": 2, "maxIterations": 20,
+             "maxRepeatedFailures": 3}
+        s.update(extra)
+        self.write(self.state, s)
+
+    def system_message(self, proc):
+        return json.loads(proc.stdout)["systemMessage"]
+
+    def test_run_budget_turns_exceeded_escalates(self):
+        self.running()
+        t = self.write_transcript([("m%d" % i, 10) for i in range(5)])
+        p = self.decide(transcript=t, max_turns=5)
+        self.assertEqual(p.returncode, 0)                  # allow stop, do NOT loop on
+        msg = self.system_message(p)
+        self.assertIn("budget exceeded (5 turns / 50 output tokens", msg)
+        self.assertIn("escalating to human", msg)
+        self.assertIn("UNVERIFIED", msg)                   # never silently passes
+        s = self.state_now()
+        self.assertEqual(s["status"], "budget_exhausted")
+        self.assertEqual(s["runBudget"]["hit"], ["turns"])
+        self.assertEqual(s["iteration"], 2)                # not bumped on escalation
+        self.assertTrue(os.path.exists(os.path.join(self.d, "BLOCKER.md")))
+
+    def test_run_budget_output_tokens_exceeded_escalates(self):
+        self.running()
+        self.write(self.verdict, {"reviewedSha": SHA, "pass": False,
+                                  "failingGate": "test", "evidence": "boom"})
+        t = self.write_transcript([("m1", 900), ("m2", 900)])
+        p = self.decide(transcript=t, max_turns=3000, max_output_tokens=1500)
+        self.assertEqual(p.returncode, 0)
+        msg = self.system_message(p)
+        self.assertIn("1800 output tokens", msg)
+        self.assertIn("fresh FAIL at gate `test`", msg)    # oracle state reported
+        self.assertEqual(self.state_now()["runBudget"]["hit"], ["outputTokens"])
+
+    def test_run_budget_dedupes_split_messages(self):
+        # One logical message split over 3 content-block lines: 1 turn / 100 tokens,
+        # not 3 / 300 — so a 2-turn, 150-token budget is NOT reached.
+        self.running()
+        t = self.write_transcript([("m1", 100), ("m1", 100), ("m1", 100)])
+        p = self.decide(transcript=t, max_turns=2, max_output_tokens=150)
+        self.assertEqual(p.returncode, 2)                  # normal block, under budget
+        self.assertIn("oracle has not been run", p.stderr)
+
+    def test_run_budget_counts_subagent_transcripts(self):
+        # Subagent runs live in <session>/subagents/*.jsonl, where most of a
+        # marathon's cost is; the ceiling must see them.
+        self.running()
+        t = self.write_transcript([("main1", 10)])
+        self.write_transcript([("sub%d" % i, 10) for i in range(4)],
+                              path=os.path.join(self.d, "session", "subagents",
+                                                "agent-abc.jsonl"))
+        p = self.decide(transcript=t, max_turns=5)
+        self.assertEqual(p.returncode, 0)
+        self.assertIn("5 turns", self.system_message(p))
+
+    def test_run_budget_under_cap_behaves_normally(self):
+        self.running()
+        t = self.write_transcript([("m%d" % i, 10) for i in range(4)])
+        p = self.decide(transcript=t, max_turns=5, max_output_tokens=1000000)
+        self.assertEqual(p.returncode, 2)
+        self.assertEqual(self.state_now()["iteration"], 3)
+
+    def test_run_budget_zero_disables(self):
+        self.running()
+        t = self.write_transcript([("m%d" % i, 10) for i in range(50)])
+        p = self.decide(transcript=t, max_turns=0, max_output_tokens=0)
+        self.assertEqual(p.returncode, 2)
+
+    def test_run_budget_missing_transcript_fail_open(self):
+        self.running()
+        p = self.decide(transcript=os.path.join(self.d, "nope.jsonl"), max_turns=1)
+        self.assertEqual(p.returncode, 2)
+        self.assertEqual(self.state_now()["iteration"], 3)
+
+    def test_run_budget_fresh_pass_still_completes(self):
+        # A verified goal is done — the ceiling only intercepts keep-working paths.
+        self.running()
+        self.write(self.verdict, {"reviewedSha": SHA, "pass": True})
+        t = self.write_transcript([("m%d" % i, 10) for i in range(50)])
+        p = self.decide(transcript=t, max_turns=5)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(self.state_now()["status"], "complete")
+
+    def test_run_budget_ships_calibrated_defaults(self):
+        # Pins the shipped defaults (3000 turns / 1 000 000 output tokens), calibrated
+        # to bind on the two measured runaways (4823 turns / 996K, 4293 / 769K).
+        self.running()
+        t = self.write_transcript([("m%d" % i, 1) for i in range(3000)])
+        p = self.decide(transcript=t)              # no cap env → engine defaults
+        self.assertEqual(p.returncode, 0)
+        self.assertIn("caps 3000/1000000", self.system_message(p))
+        self.assertEqual(self.state_now()["runBudget"]["hit"], ["turns"])
+
+    def test_run_budget_default_turns_not_reached_one_below(self):
+        self.running()
+        t = self.write_transcript([("m%d" % i, 1) for i in range(2999)])
+        self.assertEqual(self.decide(transcript=t).returncode, 2)
+
+    def test_run_budget_wins_over_usage_hold(self):
+        # Over budget AND over the usage floor → escalate, do not wait 6h to keep
+        # burning the rest of the budget.
+        self.running()
+        t = self.write_transcript([("m%d" % i, 10) for i in range(5)])
+        cache = self.write_cache(five=99, five_reset=self.iso_in(3600), seven=10)
+        p = self.decide(usage_cache=cache, transcript=t, max_turns=5)
+        self.assertEqual(p.returncode, 0)
+        self.assertEqual(self.state_now()["status"], "budget_exhausted")
+
+    def test_run_budget_defaults_agree_with_the_hook_wrapper(self):
+        # goal-loop-gate.sh ALWAYS exports the caps, so its fallbacks — not the
+        # engine's — are what ships. Drift between the two would silently run a
+        # different budget than every doc and test claims.
+        gate = os.path.join(os.path.dirname(SCRIPT), "goal-loop-gate.sh")
+        with open(gate) as fh:
+            src = fh.read()
+        self.assertEqual(src.count("3000"), 3)          # :-3000, || echo, case-guard
+        self.assertEqual(src.count("1000000"), 3)
+        self.assertNotIn("5000", src)
+        self.assertNotIn("2000000", src)
 
     def test_stuck_wins_over_hold(self):
         # A genuinely stuck loop escalates even when usage is high.

@@ -10,7 +10,7 @@ The whole point of the loop is to **not** interrupt for low-value confirmations.
 2. **Destructive / irreversible** — the next step would be irreversible: any `git push`, a schema/data migration, a public-API change, deleting data, anything outside the contract's Scope that can't be undone.
 3. **Ambiguous requirement** — two incompatible valid behaviours exist and choosing wrong wastes the work; the contract doesn't decide it.
 4. **Same failure ×N** — the oracle fails with the same signature `maxRepeatedFailures` times after materially different attempts (the Stop hook detects this and sets `status=blocked`).
-5. **Budget** — `maxIterations` reached (`status=budget_exhausted`).
+5. **Budget** — `maxIterations` reached, or the per-run ceiling `maxTurns` / `maxOutputTokens` is spent (both → `status=budget_exhausted`). A spent budget is **never** a pass: report the objective as unverified, with the last oracle state.
 6. **Security / privacy / compliance** boundary implicated.
 
 For 4 and 5 the Stop hook already wrote `.claude/loop/BLOCKER.md` and released the gate. For 1–3 and 6, you (the agent) recognise the condition yourself, write the blocker, set `status=blocked`, and stop.

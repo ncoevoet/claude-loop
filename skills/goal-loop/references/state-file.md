@@ -21,6 +21,7 @@ The authoritative loop state. Read/written by the skill (setup) and the Stop hoo
 |---|---|
 | `status` | `running` (armed; also covers a short in-session usage wait) · `paused` (long usage wait — manual resume) · `complete` (oracle passed) · `blocked` (stuck, escalate) · `budget_exhausted` (hit cap) · `aborted` (kill switch) |
 | `iteration` | Count of Stop-hook blocks (oracle fail or "not verified yet"). Bumped by the hook; at `maxIterations` → `budget_exhausted`. A usage wait/pause does **not** bump it. |
+| `runBudget` | Written when the per-run ceiling stops the loop (`status=budget_exhausted`): `{turns, outputTokens, maxTurns, maxOutputTokens, hit}` — the session's transcript-derived counts and which ceiling(s) tripped. Not bumped/not present otherwise. |
 | `sameFailureCount` / `lastFailureSig` | Stuck-detector: a signature is `failingGate:sha256(evidence)[:16]`. Same signature `maxRepeatedFailures` times → `blocked`. |
 | `usageHold` | Present while the loop is HALTED IN-SESSION for usage (status stays `running`): `{window, util, resumeAt}`. The hook blocks each turn telling the agent to run `watch-quota.sh`; cleared once usage drops below the floor. |
 | `pausedReason` / `pausedWindow` / `pausedUtil` / `resumeAt` / `pausedAt` | Written for the long-wait fallback (`status=paused`, reset beyond `maxAutoWait` — e.g. the weekly window): why (`usage`), which window (`five_hour` · `seven_day` · `both`), per-window % at pause, the binding reset ISO, and when. Cleared on resume. |
@@ -53,6 +54,8 @@ Kill switch. `touch .claude/loop/ABORT` (or `/goal-loop abort`) → the Stop hoo
 arm (skill) ──> running ──oracle pass──> complete            (hook allows stop)
                   │  ├─ same failure ×N ─> blocked            (hook allows stop + BLOCKER)
                   │  ├─ iteration ≥ cap ──> budget_exhausted  (hook allows stop + BLOCKER)
+                  │  ├─ turns/tokens ≥ cap > budget_exhausted  (hook allows stop + BLOCKER
+                  │  │                                          + systemMessage, oracle NOT passed)
                   │  ├─ usage ≥ floor, reset ≤ maxAutoWait ─> (stays running) hook blocks each
                   │  │       turn → agent runs watch-quota.sh → freed → resumes in-session
                   │  ├─ usage ≥ floor, reset > maxAutoWait ─> paused ──/goal-loop resume──> running

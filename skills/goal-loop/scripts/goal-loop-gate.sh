@@ -10,7 +10,7 @@
 # FAIL-OPEN at every step: any missing tool / unreadable state → exit 0, so the
 # hook can never wedge a session. Dormant (exit 0) unless a loop is armed.
 set -u
-cat >/dev/null 2>&1 || true            # consume the Stop-hook stdin context
+HOOK_INPUT="$(cat 2>/dev/null || true)"  # the Stop-hook stdin context (JSON)
 
 command -v python3 >/dev/null 2>&1 || exit 0
 command -v git >/dev/null 2>&1 || exit 0
@@ -56,8 +56,22 @@ WINDOWS="$(loop_json_get "$CONFIG" budget.usageWindows 'five_hour seven_day' 2>/
 [ -n "${WINDOWS// }" ] || WINDOWS="five_hour seven_day"
 MAXWAIT="$(loop_json_get "$CONFIG" budget.maxAutoWait 21600 2>/dev/null || echo 21600)"
 
+# Run ceiling: the session transcript is where the turn + output-token counts come
+# from, and the Stop hook is handed its path on stdin. Absent/unparseable → empty,
+# and the decision engine simply skips the run-budget check (fail-open).
+# (piped, not argv: the payload carries `last_assistant_message` and can exceed
+# MAX_ARG_STRLEN, which would silently disable the ceiling.)
+TRANSCRIPT="$(printf '%s' "$HOOK_INPUT" | python3 -c \
+  'import json,sys; print(json.load(sys.stdin).get("transcript_path") or "", end="")' \
+  2>/dev/null || true)"
+MAXTURNS="$(loop_json_get "$CONFIG" budget.maxTurns "${LOOP_MAX_TURNS:-3000}" 2>/dev/null || echo 3000)"
+case "$MAXTURNS" in ''|*[!0-9]*) MAXTURNS=3000 ;; esac
+MAXOUT="$(loop_json_get "$CONFIG" budget.maxOutputTokens "${LOOP_MAX_OUTPUT_TOKENS:-1000000}" 2>/dev/null || echo 1000000)"
+case "$MAXOUT" in ''|*[!0-9]*) MAXOUT=1000000 ;; esac
+
 LOOP_USAGE_CACHE="$USAGE_CACHE" LOOP_USAGE_FLOOR="$FLOOR" LOOP_USAGE_WINDOWS="$WINDOWS" \
   LOOP_USAGE_MAX_WAIT="$MAXWAIT" \
+  LOOP_TRANSCRIPT="$TRANSCRIPT" LOOP_MAX_TURNS="$MAXTURNS" LOOP_MAX_OUTPUT_TOKENS="$MAXOUT" \
   python3 "$HERE/gate-decide.py" "$STATE" "$STATE_DIR/verdict.json" "$WORK_SHA" "$HERE/verify.sh"
 rc=$?
 

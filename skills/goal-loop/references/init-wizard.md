@@ -12,7 +12,7 @@ Run on `/goal-loop init`, or automatically (with the user's confirmation) the fi
 
 4. **review-all gate.** If the `review-all` plugin is installed and the user wants the semantic gate, add `reviewall` to `mandatory` and set `reviewall.severityFloor` (default `important` = 🔴+🟠; `critical` to gate on 🔴 only). If review-all is not installed, say so and leave `reviewall` out.
 
-5. **Budget.** Confirm `budget.maxIterations` (default 20) and `budget.maxRepeatedFailures` (default 3).
+5. **Budget.** Confirm `budget.maxIterations` (default 20) and `budget.maxRepeatedFailures` (default 3). Mention the per-run ceiling `budget.maxTurns` / `budget.maxOutputTokens` (defaults 3000 / 1 000 000) — the bound on what a single run may spend before escalating. The defaults bind on a measured runaway; only write them if this project's loops legitimately run longer and need a higher ceiling.
 
 6. **Write** `.claude/loop.json` (see `config-keys.md` for the schema) and show the final file. Remind the user `.claude/loop/` (run-state) is gitignored but `.claude/loop.json` (config) should be committed.
 
